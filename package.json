@@ -1,7 +1,6 @@
 {
   "name": "efipay-proxy",
   "version": "1.0.0",
-  "description": "Proxy serverless para comunicação com EfiPay via Railway",
   "main": "functions/efipay-proxy.js",
   "type": "module",
   "scripts": {
