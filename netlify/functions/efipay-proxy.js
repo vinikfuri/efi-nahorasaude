@@ -1,3 +1,4 @@
+// netlify/functions/efipay-proxy.js
 
 exports.handler = async (event, context) => {
   const corsHeaders = {
@@ -11,18 +12,24 @@ exports.handler = async (event, context) => {
   }
 
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method not allowed' }) };
+    return {
+      statusCode: 405,
+      headers: corsHeaders,
+      body: JSON.stringify({ error: 'Method not allowed' })
+    };
   }
 
   try {
     const payload = JSON.parse(event.body);
-
-    const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
-    const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
-    const EFIPAY_PIX_KEY = process.env.EFIPAY_PIX_KEY;
+    
+    const {
+      EFIPAY_CLIENT_ID,
+      EFIPAY_CLIENT_SECRET,
+      EFIPAY_PIX_KEY
+    } = process.env;
 
     if (!EFIPAY_CLIENT_ID || !EFIPAY_CLIENT_SECRET || !EFIPAY_PIX_KEY) {
-      throw new Error('Credenciais EfiPay não configuradas');
+      throw new Error('Credenciais EfiPay ausentes nas variáveis de ambiente');
     }
 
     const valorNumerico = Number(payload.valor);
@@ -43,15 +50,14 @@ exports.handler = async (event, context) => {
       method: 'POST',
       headers: {
         'Authorization': `Basic ${basic}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'NaHoraSaude-NetlifyProxy/1.0'
+        'Content-Type': 'application/x-www-form-urlencoded'
       },
       body: new URLSearchParams({ grant_type: 'client_credentials' }).toString()
     });
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      throw new Error(`EfiPay auth failed: ${errorText}`);
+      throw new Error(`Falha na autenticação com a EfiPay: ${errorText}`);
     }
 
     const tokenData = await tokenResponse.json();
@@ -75,8 +81,61 @@ exports.handler = async (event, context) => {
       headers: {
         'Authorization': `Bearer ${efipay_token}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'NaHoraSaude-NetlifyProxy/1.0',
         'Accept': 'application/json'
+      },
+      body: JSON.stringify(chargePayload)
+    });
+
+    if (!chargeResponse.ok) {
+      const errorText = await chargeResponse.text();
+      throw new Error(`Falha ao criar cobrança: ${errorText}`);
+    }
+
+    const chargeResult = await chargeResponse.json();
+
+    return {
+      statusCode: 200,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        success: true,
+        data: {
+          txid,
+          valor: valorNumerico,
+          nome_cliente,
+          qr_code: chargeResult.pixCopiaECola || null,
+          qr_code_image: chargeResult.qrcode || null,
+          vencimento: new Date(Date.now() + (3600 * 1000)).toISOString(),
+          efipay_response: chargeResult,
+          cliente_id: payload.cliente_id || null,
+          franqueado_id: payload.franqueado_id || null,
+          referente_a: payload.referente_a || null,
+          user_id: payload.user_id || null,
+          tipo: payload.tipo || "cliente"
+        }
+      })
+    };
+
+  } catch (error) {
+    console.error('Proxy error:', error);
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        success: false,
+        error: error.message || 'Erro interno do proxy'
+      })
+    };
+  }
+};
+    };
+
+    const chargeResponse = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${efipay_token}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'NaHoraSaude-NetlifyProxy/1.0',
+        'Accespt': 'application/json'
       },
       body: JSON.stringify(chargePayload)
     });
