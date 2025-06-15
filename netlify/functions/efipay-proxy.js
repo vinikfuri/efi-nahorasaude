@@ -1,126 +1,114 @@
-
-exports.handler = async (event, context) => {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers: corsHeaders, body: '' };
-  }
-
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: 'Method not allowed' })
-    };
-  }
-
-  try {
-    const payload = JSON.parse(event.body);
-
-    const EFIPAY_CLIEconst express = require('express');
-const bodyParser = require('body-parser');
+const express = require('express');
 const fetch = require('node-fetch');
 const app = express();
 
-app.use(bodyParser.json());
+app.use(express.json());
 
-app.post('/efipay-proxy', async (req, res) => {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS'
-  };
+app.post('/', async (req, res) => {
+  const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
+  const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
+  const EFIPAY_PIX_KEY = process.env.EFIPAY_PIX_KEY;
+
+  if (!EFIPAY_CLIENT_ID || !EFIPAY_CLIENT_SECRET || !EFIPAY_PIX_KEY) {
+    return res.status(500).json({
+      success: false,
+      error: 'Credenciais EfiPay não configuradas',
+    });
+  }
+
+  const payload = req.body;
+
+  if (
+    !payload ||
+    !payload.nome_cliente ||
+    !payload.cpf_cliente ||
+    !payload.valor ||
+    !payload.franqueado_codigo
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'Campos obrigatórios ausentes',
+    });
+  }
+
+  const basicAuth = Buffer.from(`${EFIPAY_CLIENT_ID}:${EFIPAY_CLIENT_SECRET}`).toString('base64');
 
   try {
-    const payload = req.body;
-
-    const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
-    const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
-    const EFIPAY_PIX_KEY = process.env.EFIPAY_PIX_KEY;
-
-    if (!EFIPAY_CLIENT_ID || !EFIPAY_CLIENT_SECRET || !EFIPAY_PIX_KEY) {
-      return res.status(500).json({ success: false, error: "Credenciais EfiPay ausentes" });
-    }
-
-    const basic = Buffer.from(`${EFIPAY_CLIENT_ID}:${EFIPAY_CLIENT_SECRET}`).toString('base64');
-    const tokenResponse = await fetch('https://pix.api.efipay.com.br/oauth/token', {
+    // OAuth2
+    const tokenRes = await fetch('https://pix.api.efipay.com.br/oauth/token', {
       method: 'POST',
       headers: {
-        'Authorization': `Basic ${basic}`,
+        Authorization: `Basic ${basicAuth}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'NaHoraSaude-RenderProxy/1.0'
       },
-      body: new URLSearchParams({ grant_type: 'client_credentials' }).toString()
+      body: new URLSearchParams({ grant_type: 'client_credentials' }),
     });
 
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      return res.status(500).json({ success: false, error: "Erro ao autenticar", details: errorText });
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      throw new Error(`Erro ao autenticar EfiPay: ${err}`);
     }
 
-    const tokenData = await tokenResponse.json();
-    const efipay_token = tokenData.access_token;
+    const tokenJson = await tokenRes.json();
+    const accessToken = tokenJson.access_token;
 
-    const nome_cliente = (payload.nome_cliente || payload.nome || "").trim();
-    const cpf_cliente = (payload.cpf_cliente || payload.cpf || "").replace(/\D/g, "");
-    const valorNumerico = Number(payload.valor || 0).toFixed(2);
     const txid = `txid-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     const chargePayload = {
       calendario: { expiracao: 3600 },
-      devedor: { nome: nome_cliente, cpf: cpf_cliente },
-      valor: { original: valorNumerico },
+      devedor: {
+        nome: payload.nome_cliente,
+        cpf: payload.cpf_cliente.replace(/\D/g, ''),
+      },
+      valor: {
+        original: Number(payload.valor).toFixed(2),
+      },
       chave: EFIPAY_PIX_KEY,
-      solicitacaoPagador: `Plano NaHoraSaude para ${nome_cliente}`.substring(0, 140),
+      solicitacaoPagador: payload.descricao || 'Plano NaHoraSaude',
       infoAdicionais: [
-        { nome: "Cliente", valor: nome_cliente.substring(0, 50) },
-        { nome: "Plano", valor: "NaHoraSaude" }
-      ]
+        { nome: 'Cliente', valor: payload.nome_cliente },
+        { nome: 'Franqueado', valor: payload.franqueado_codigo },
+        { nome: 'Plano', valor: 'NaHoraSaude' },
+      ],
     };
 
-    const chargeResponse = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
+    const chargeRes = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
       method: 'PUT',
       headers: {
-        'Authorization': `Bearer ${efipay_token}`,
+        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
-        'User-Agent': 'NaHoraSaude-RenderProxy/1.0'
       },
-      body: JSON.stringify(chargePayload)
+      body: JSON.stringify(chargePayload),
     });
 
-    if (!chargeResponse.ok) {
-      const errorText = await chargeResponse.text();
-      return res.status(500).json({ success: false, error: "Erro ao criar cobrança", details: errorText });
+    if (!chargeRes.ok) {
+      const err = await chargeRes.text();
+      throw new Error(`Erro ao criar cobrança: ${err}`);
     }
 
-    const chargeResult = await chargeResponse.json();
+    const charge = await chargeRes.json();
 
     return res.status(200).json({
       success: true,
       data: {
         txid,
-        valor: valorNumerico,
-        nome_cliente,
-        qr_code: chargeResult.pixCopiaECola || null,
-        qr_code_image: chargeResult.qrcode || null,
-        vencimento: new Date(Date.now() + (3600 * 1000)).toISOString(),
-        efipay_response: chargeResult
-      }
+        valor: chargePayload.valor.original,
+        nome_cliente: payload.nome_cliente,
+        qr_code: charge.pixCopiaECola,
+        qr_code_image: charge.qrcode,
+        vencimento: new Date(Date.now() + 3600 * 1000).toISOString(),
+        efipay_response: charge,
+      },
     });
-
-  } catch (error) {
+  } catch (err) {
     return res.status(500).json({
       success: false,
-      error: "Erro interno no servidor",
-      details: error.message
+      error: 'Erro ao processar proxy',
+      details: err.message,
     });
   }
 });
 
 app.listen(3000, () => {
-  console.log("EfiPay proxy rodando na porta 3000");
+  console.log('EfiPay proxy server running on port 3000');
 });
