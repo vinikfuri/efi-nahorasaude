@@ -1,3 +1,4 @@
+
 exports.handler = async (event, context) => {
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -15,6 +16,7 @@ exports.handler = async (event, context) => {
 
   try {
     const payload = JSON.parse(event.body);
+
     const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
     const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
     const EFIPAY_PIX_KEY = process.env.EFIPAY_PIX_KEY;
@@ -107,12 +109,16 @@ exports.handler = async (event, context) => {
         }
       })
     };
+
   } catch (error) {
     console.error('Proxy error:', error);
     return {
       statusCode: 500,
       headers: corsHeaders,
-      body: JSON.stringify({ success: false, error: error.message || 'Erro interno do proxy' })
+      body: JSON.stringify({
+        success: false,
+        error: error.message || 'Erro interno do proxy'
+      })
     };
   }
 };
