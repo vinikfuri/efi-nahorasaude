@@ -1,70 +1,71 @@
-// functions/efipay-proxy.js
 const express = require("express");
-const cors = require("cors");
 const axios = require("axios");
+const cors = require("cors");
 
 const app = express();
-const port = 8080;
-
 app.use(cors());
 app.use(express.json());
 
+const PORT = process.env.PORT || 8080;
+
 app.post("/", async (req, res) => {
-  console.log("✅ Requisição recebida no proxy");
-
-  const { method = "POST", endpoint, body = {} } = req.body;
-
-  if (!endpoint || typeof endpoint !== "string") {
-    return res.status(400).json({ success: false, error: "Endpoint inválido" });
-  }
-
   try {
-    // 1. Obtem token OAuth da EfiPay
-    const tokenRes = await axios({
+    const { endpoint, method, body } = req.body;
+
+    console.log("📥 Requisição recebida no proxy");
+    console.log("🔗 Endpoint:", endpoint);
+    console.log("📦 Método:", method);
+    console.log("🧾 Corpo:", JSON.stringify(body));
+
+    // Autenticação
+    const tokenResponse = await axios({
       method: "POST",
       url: `${process.env.EFIPAY_BASE_URL}/v1/authorize`,
       headers: {
         "Content-Type": "application/json",
-        Authorization:
-          "Basic " +
-          Buffer.from(
-            `${process.env.EFIPAY_CLIENT_ID}:${process.env.EFIPAY_CLIENT_SECRET}`
-          ).toString("base64"),
       },
-      data: {
-        grant_type: "client_credentials",
+      auth: {
+        username: process.env.EFIPAY_CLIENT_ID,
+        password: process.env.EFIPAY_CLIENT_SECRET,
       },
     });
 
-    const token = tokenRes.data?.access_token;
-
-    if (!token) {
-      console.error("❌ Falha ao obter token:", tokenRes.data);
-      return res.status(500).json({ success: false, error: "Token não retornado pela EfiPay", raw: tokenRes.data });
+    const accessToken = tokenResponse.data?.access_token;
+    if (!accessToken) {
+      console.error("❌ Falha ao obter token: nenhum token retornado");
+      return res.status(500).json({ error: "Erro ao obter token da EfiPay" });
     }
 
-    // 2. Faz a requisição real para a EfiPay
-    const apiRes = await axios({
-      method,
+    // Enviar requisição real
+    const efipayResponse = await axios({
+      method: method,
       url: `${process.env.EFIPAY_BASE_URL}/${endpoint}`,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
       data: body,
     });
 
-    return res.status(200).json({ success: true, data: apiRes.data });
+    console.log("✅ Resposta da EfiPay recebida com sucesso");
+    res.json(efipayResponse.data);
   } catch (err) {
-    console.error("❌ ERRO NO PROXY:", err.response?.data || err.message);
-    return res.status(500).json({
-      success: false,
-      error: "Erro no proxy",
-      details: err.response?.data || err.message,
-    });
+    console.error("❌ Erro no proxy:", err.message);
+    if (err.response) {
+      console.error("📡 Resposta da EfiPay:", err.response.data);
+      res.status(err.response.status).json({
+        error: "Erro ao processar requisição",
+        details: err.response.data,
+      });
+    } else {
+      res.status(500).json({
+        error: "Erro inesperado no servidor proxy",
+        details: err.message,
+      });
+    }
   }
 });
 
-app.listen(port, () => {
-  console.log(`✅ EfiPay proxy server rodando em http://localhost:${port}`);
+app.listen(PORT, () => {
+  console.log(`✅ EfiPay proxy server rodando na porta ${PORT}`);
 });
