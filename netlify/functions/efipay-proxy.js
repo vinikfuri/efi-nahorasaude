@@ -1,4 +1,3 @@
-// netlify/functions/efipay-proxy.js
 
 exports.handler = async (event, context) => {
   const corsHeaders = {
@@ -21,77 +20,52 @@ exports.handler = async (event, context) => {
 
   try {
     const payload = JSON.parse(event.body);
-    
-    const {
-      EFIPAY_CLIENT_ID,
-      EFIPAY_CLIENT_SECRET,
-      EFIPAY_PIX_KEY
-    } = process.env;
+    const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
+    const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
+    const EFIPAY_PIX_KEY = process.env.EFIPAY_PIX_KEY;
 
     if (!EFIPAY_CLIENT_ID || !EFIPAY_CLIENT_SECRET || !EFIPAY_PIX_KEY) {
-      throw new Error('Credenciais EfiPay ausentes nas variáveis de ambiente');
+      throw new Error('Missing credentials');
     }
 
-    const valorNumerico = Number(payload.valor);
-    const nome_cliente = (payload.nome_cliente || payload.nome || "").trim();
-    const cpf_cliente = (payload.cpf_cliente || payload.cpf || "").replace(/\D/g, "");
-    const franqueado_codigo = (payload.franqueado_codigo || payload.codigo || payload.franqueado_id || "").toString().toUpperCase();
-
-    if (!nome_cliente || !cpf_cliente || !valorNumerico || !franqueado_codigo) {
-      throw new Error('Campos obrigatórios ausentes');
-    }
-
-    const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).substring(2, 8);
-    const txid = `txid-na-hora-${timestamp}-${randomSuffix}`;
+    const valor = Number(payload.valor);
+    const nome = (payload.nome_cliente || "").trim();
+    const cpf = (payload.cpf_cliente || "").replace(/\D/g, "");
+    const franqueado = (payload.franqueado_codigo || "").toUpperCase();
+    const txid = `txid-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     const basic = Buffer.from(`${EFIPAY_CLIENT_ID}:${EFIPAY_CLIENT_SECRET}`).toString('base64');
-    const tokenResponse = await fetch('https://pix.api.efipay.com.br/oauth/token', {
-      method: 'POST',
+    const tokenRes = await fetch("https://pix.api.efipay.com.br/oauth/token", {
+      method: "POST",
       headers: {
-        'Authorization': `Basic ${basic}`,
-        'Content-Type': 'application/x-www-form-urlencoded'
+        Authorization: `Basic ${basic}`,
+        "Content-Type": "application/x-www-form-urlencoded"
       },
-      body: new URLSearchParams({ grant_type: 'client_credentials' }).toString()
+      body: new URLSearchParams({ grant_type: "client_credentials" }).toString()
     });
 
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      throw new Error(`Falha na autenticação com a EfiPay: ${errorText}`);
-    }
-
-    const tokenData = await tokenResponse.json();
+    const tokenData = await tokenRes.json();
     const efipay_token = tokenData.access_token;
 
-    const chargePayload = {
+    const body = {
       calendario: { expiracao: 3600 },
-      devedor: { nome: nome_cliente, cpf: cpf_cliente },
-      valor: { original: valorNumerico.toFixed(2) },
+      devedor: { nome, cpf },
+      valor: { original: valor.toFixed(2) },
       chave: EFIPAY_PIX_KEY,
-      solicitacaoPagador: payload.descricao || `Plano NaHoraSaude para ${nome_cliente}`.substring(0, 140),
-      infoAdicionais: [
-        { nome: "Cliente", valor: nome_cliente.substring(0, 50) },
-        { nome: "Franqueado", valor: franqueado_codigo },
-        { nome: "Plano", valor: "NaHoraSaude" }
-      ]
+      solicitacaoPagador: "Plano NaHoraSaude",
+      infoAdicionais: [{ nome: "Franqueado", valor: franqueado }]
     };
 
-    const chargeResponse = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
-      method: 'PUT',
+    const chargeRes = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
+      method: "PUT",
       headers: {
-        'Authorization': `Bearer ${efipay_token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        Authorization: `Bearer ${efipay_token}`,
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify(chargePayload)
+      body: JSON.stringify(body)
     });
 
-    if (!chargeResponse.ok) {
-      const errorText = await chargeResponse.text();
-      throw new Error(`Falha ao criar cobrança: ${errorText}`);
-    }
-
-    const chargeResult = await chargeResponse.json();
+    const chargeData = await chargeRes.json();
 
     return {
       statusCode: 200,
@@ -100,84 +74,19 @@ exports.handler = async (event, context) => {
         success: true,
         data: {
           txid,
-          valor: valorNumerico,
-          nome_cliente,
-          qr_code: chargeResult.pixCopiaECola || null,
-          qr_code_image: chargeResult.qrcode || null,
-          vencimento: new Date(Date.now() + (3600 * 1000)).toISOString(),
-          efipay_response: chargeResult,
-          cliente_id: payload.cliente_id || null,
-          franqueado_id: payload.franqueado_id || null,
-          referente_a: payload.referente_a || null,
-          user_id: payload.user_id || null,
-          tipo: payload.tipo || "cliente"
+          valor,
+          nome_cliente: nome,
+          qr_code: chargeData.pixCopiaECola,
+          qr_code_image: chargeData.qrcode
         }
       })
     };
-
-  } catch (error) {
-    console.error('Proxy error:', error);
+  } catch (err) {
+    console.error("Proxy error:", err);
     return {
       statusCode: 500,
       headers: corsHeaders,
-      body: JSON.stringify({
-        success: false,
-        error: error.message || 'Erro interno do proxy'
-      })
-    };
-  }
-};
-    };
-
-    const chargeResponse = await fetch(`https://pix.api.efipay.com.br/v2/cob/${txid}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${efipay_token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'NaHoraSaude-NetlifyProxy/1.0',
-        'Accespt': 'application/json'
-      },
-      body: JSON.stringify(chargePayload)
-    });
-
-    if (!chargeResponse.ok) {
-      const errorText = await chargeResponse.text();
-      throw new Error(`EfiPay charge failed: ${errorText}`);
-    }
-
-    const chargeResult = await chargeResponse.json();
-
-    return {
-      statusCode: 200,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        success: true,
-        data: {
-          txid,
-          valor: valorNumerico,
-          nome_cliente,
-          qr_code: chargeResult.pixCopiaECola || null,
-          qr_code_image: chargeResult.qrcode || null,
-          vencimento: new Date(Date.now() + (3600 * 1000)).toISOString(),
-          efipay_response: chargeResult,
-          cliente_id: payload.cliente_id || null,
-          franqueado_id: payload.franqueado_id || null,
-          referente_a: payload.referente_a || null,
-          user_id: payload.user_id || null,
-          tipo: payload.tipo || "cliente"
-        }
-      })
-    };
-
-  } catch (error) {
-    console.error('Proxy error:', error);
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({
-        success: false,
-        error: error.message || 'Erro interno do proxy'
-      })
+      body: JSON.stringify({ success: false, error: err.message })
     };
   }
 };
