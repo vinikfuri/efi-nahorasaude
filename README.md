@@ -1,2 +1,3 @@
-# efi-nahorasaude
-Função proxy Netlify para comunicação com a EfiPay via Supabase.
+# EfiPay Proxy
+
+Deploy para Render com função proxy entre Supabase e EfiPay.
