@@ -1,12 +1,8 @@
 [build]
 command = "npm install"
 
-[deploy]
+[start]
 command = "node functions/efipay-proxy.js"
 
-[services]
-  [services.efipay-proxy]
-  internal_port = 8080
-  protocol = "http"
-  auto_start = true
-  auto_stop = true
+[services.efipay-proxy]
+port = 8080
