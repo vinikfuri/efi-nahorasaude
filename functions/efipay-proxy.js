@@ -1,58 +1,57 @@
 const express = require("express");
+const bodyParser = require("body-parser");
 const axios = require("axios");
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
+
+const PORT = process.env.PORT || 8080;
 
 app.post("/", async (req, res) => {
-  const { endpoint, method, body } = req.body;
+  console.log("✅ Requisição recebida no proxy");
+  const { method, endpoint, body } = req.body || {};
 
-  if (!endpoint || !method || !body) {
-    return res.status(400).json({
-      success: false,
-      error: "Campos obrigatórios ausentes",
-      details: "Você precisa enviar 'endpoint', 'method' e 'body'"
-    });
+  if (!method || !endpoint || !body) {
+    console.error("❌ Campos obrigatórios ausentes no payload");
+    return res.status(400).json({ success: false, error: "Campos obrigatórios ausentes" });
   }
 
+  const clientId = process.env.EFIPAY_CLIENT_ID;
+  const clientSecret = process.env.EFIPAY_CLIENT_SECRET;
+  const baseUrl = process.env.EFIPAY_BASE_URL;
+
+  if (!clientId || !clientSecret || !baseUrl) {
+    console.error("❌ Variáveis de ambiente ausentes no Railway");
+    return res.status(500).json({ success: false, error: "Credenciais EfiPay não configuradas" });
+  }
+
+  const fullUrl = `${baseUrl.replace(/\/$/, "")}/${endpoint.replace(/^\//, "")}`;
+  const token = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
   try {
-    const efipayBaseUrl = "https://pix.api.efipay.com.br";
-    const credentials = Buffer.from(`${process.env.EFIPAY_CLIENT_ID}:${process.env.EFIPAY_CLIENT_SECRET}`).toString("base64");
-
-    const authRes = await axios.post(`${efipayBaseUrl}/oauth/token`, {
-      grant_type: "client_credentials"
-    }, {
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    const token = authRes.data.access_token;
-
     const response = await axios({
       method,
-      url: `${efipayBaseUrl}/${endpoint}`,
-      data: body,
+      url: fullUrl,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Basic ${token}`,
         "Content-Type": "application/json"
-      }
+      },
+      data: body,
+      timeout: 10000 // 10 segundos
     });
 
-    return res.status(200).json(response.data);
-  } catch (error) {
-    console.error("Erro no proxy:", error?.response?.data || error.message);
+    console.log("✅ Resposta recebida da EfiPay");
+    return res.json(response.data);
+  } catch (err) {
+    console.error("❌ ERRO NO AXIOS:", err?.message);
     return res.status(500).json({
       success: false,
       error: "Erro ao processar proxy",
-      details: error?.response?.data || error.message
+      details: err?.message || "Erro inesperado"
     });
   }
 });
 
-// 👇 ESSENCIAL PARA FUNCIONAR NO RAILWAY
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`✅ EfiPay proxy server running on port ${PORT}`);
 });
