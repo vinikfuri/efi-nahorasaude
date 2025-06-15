@@ -1,107 +1,58 @@
-// efipay-proxy.js
+const express = require("express");
+const axios = require("axios");
 
-const https = require("https");
-const crypto = require("crypto");
+const app = express();
+app.use(express.json());
 
-exports.handler = async (event, context) => {
-  try {
-    if (event.httpMethod !== "POST") {
-      return {
-        statusCode: 405,
-        body: JSON.stringify({ success: false, error: "Method Not Allowed" }),
-      };
-    }
+app.post("/", async (req, res) => {
+  const { endpoint, method, body } = req.body;
 
-    const body = event.body;
-    const receivedSignature = event.headers["x-signature"] || event.headers["X-Signature"];
-
-    const secret = process.env.EFIPAY_HMAC_SECRET;
-    if (!secret) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ success: false, error: "HMAC secret not configured" }),
-      };
-    }
-
-    const hmac = crypto.createHmac("sha256", secret);
-    hmac.update(body, "utf8");
-    const expectedSignature = hmac.digest("hex");
-
-    if (receivedSignature !== expectedSignature) {
-      return {
-        statusCode: 401,
-        body: JSON.stringify({ success: false, error: "Invalid signature" }),
-      };
-    }
-
-    const payload = JSON.parse(body);
-
-    const supabaseUrl = process.env.SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseKey) {
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ success: false, error: "Supabase credentials not configured" }),
-      };
-    }
-
-    const baseUrl = "https://api.efipay.com.br"; // sempre produção
-
-    const { txid } = payload;
-
-    const data = JSON.stringify({
-      txid,
-      recebido_em: new Date().toISOString(),
-      valor: payload.valor,
-      pagador: payload.devedor || null,
-      raw: payload,
+  if (!endpoint || !method || !body) {
+    return res.status(400).json({
+      success: false,
+      error: "Campos obrigatórios ausentes",
+      details: "Você precisa enviar 'endpoint', 'method' e 'body'"
     });
-
-    const options = {
-      hostname: supabaseUrl.replace("https://", "").replace("/", ""),
-      port: 443,
-      path: "/rest/v1/pagamentos_pix",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`,
-        Prefer: "return=minimal",
-        "Content-Length": Buffer.byteLength(data),
-      },
-    };
-
-    const response = await new Promise((resolve, reject) => {
-      const req = https.request(options, (res) => {
-        let responseData = "";
-        res.on("data", (chunk) => {
-          responseData += chunk;
-        });
-        res.on("end", () => {
-          resolve({
-            statusCode: res.statusCode,
-            body: responseData,
-          });
-        });
-      });
-
-      req.on("error", (e) => {
-        reject(e);
-      });
-
-      req.write(data);
-      req.end();
-    });
-
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ success: true, message: "Pagamento registrado", supabase: response }),
-    };
-  } catch (error) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ success: false, error: error.message }),
-    };
   }
-};
+
+  try {
+    const efipayBaseUrl = "https://pix.api.efipay.com.br";
+    const credentials = Buffer.from(`${process.env.EFIPAY_CLIENT_ID}:${process.env.EFIPAY_CLIENT_SECRET}`).toString("base64");
+
+    const authRes = await axios.post(`${efipayBaseUrl}/oauth/token`, {
+      grant_type: "client_credentials"
+    }, {
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const token = authRes.data.access_token;
+
+    const response = await axios({
+      method,
+      url: `${efipayBaseUrl}/${endpoint}`,
+      data: body,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    return res.status(200).json(response.data);
+  } catch (error) {
+    console.error("Erro no proxy:", error?.response?.data || error.message);
+    return res.status(500).json({
+      success: false,
+      error: "Erro ao processar proxy",
+      details: error?.response?.data || error.message
+    });
+  }
+});
+
+// 👇 ESSENCIAL PARA FUNCIONAR NO RAILWAY
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ EfiPay proxy server running on port ${PORT}`);
+});
