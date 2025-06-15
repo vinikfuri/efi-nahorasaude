@@ -1,9 +1,13 @@
-
 {
-  "name": "efi-nahorasaude",
+  "name": "efipay-proxy",
   "version": "1.0.0",
+  "description": "Proxy serverless para comunicação com EfiPay via Railway",
   "main": "functions/efipay-proxy.js",
+  "type": "module",
+  "scripts": {
+    "start": "node functions/efipay-proxy.js"
+  },
   "dependencies": {
-    "axios": "^1.6.0"
+    "axios": "^1.6.8"
   }
 }
