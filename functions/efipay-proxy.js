@@ -8,17 +8,17 @@ app.use(cors());
 
 const PORT = 8080;
 
-const EFIPAY_BASE_URL = process.env.EFIPAY_BASE_URL; // Ex: https://api.efipay.com.br
+const EFIPAY_BASE_URL = process.env.EFIPAY_BASE_URL || 'https://api.efipay.com.br';
+const EFIPAY_AUTH_URL = process.env.EFIPAY_AUTH_URL || 'https://oauth.efipay.com.br';
 const EFIPAY_CLIENT_ID = process.env.EFIPAY_CLIENT_ID;
 const EFIPAY_CLIENT_SECRET = process.env.EFIPAY_CLIENT_SECRET;
-const EFIPAY_AUTH_URL = process.env.EFIPAY_AUTH_URL || 'https://oauth.efipay.com.br';
 
 async function getAccessToken() {
   try {
     const credentials = Buffer.from(`${EFIPAY_CLIENT_ID}:${EFIPAY_CLIENT_SECRET}`).toString('base64');
 
     const response = await axios.post(
-      `${EFIPAY_AUTH_URL}/token`,
+      `${EFIPAY_AUTH_URL}/oauth/token`,
       { grant_type: 'client_credentials' },
       {
         headers: {
@@ -79,10 +79,15 @@ app.post('/', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// Protege contra crash se porta já estiver em uso
+const server = app.listen(PORT, () => {
   console.log(`✅ EfiPay proxy server rodando na porta ${PORT}`);
 });
 
-app.listen(PORT, () => {
-  console.log(`✅ EfiPay proxy server rodando na porta ${PORT}`);
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Porta ${PORT} já está em uso. O servidor não pôde iniciar.`);
+  } else {
+    console.error('❌ Erro ao iniciar o servidor:', err);
+  }
 });
