@@ -1,3 +1,2 @@
-# EfiPay Proxy
-
-Deploy para Render com função proxy entre Supabase e EfiPay.
+# efipay-proxy
+Função proxy para comunicação com EfiPay via Supabase.
